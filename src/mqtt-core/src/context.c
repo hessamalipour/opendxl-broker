@@ -278,7 +278,7 @@ void mqtt3_context_cleanup_certs(struct mosquitto *context)
     struct cert_hashes *current, *tmp;
     HASH_ITER(hh, context->cert_hashes, current, tmp){
         HASH_DEL(context->cert_hashes, current);
-        _mosquitto_free((void*)current->cert_sha1);
+        _mosquitto_free((void*)current->cert_sha256);
         _mosquitto_free(current);
     }
     context->cert_hashes = NULL;

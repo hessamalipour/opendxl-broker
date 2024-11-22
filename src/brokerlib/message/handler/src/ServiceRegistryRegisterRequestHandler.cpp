@@ -52,7 +52,7 @@ bool ServiceRegistryRegisterRequestHandler::onStoreMessage(
         struct cert_hashes *current, *tmp;
         HASH_ITER( hh, certHashes, current, tmp ) 
         {
-            certs.insert( current->cert_sha1 );
+            certs.insert( current->cert_sha256 );
         }        
         registerPayload.setCertificates( certs );
     }

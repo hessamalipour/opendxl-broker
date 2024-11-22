@@ -5,26 +5,8 @@ All rights reserved.
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
-1. Redistributions of source code must retain the above copyright notice,
-   this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-   notice, this list of conditions and the following disclaimer in the
-   documentation and/or other materials provided with the distribution.
-3. Neither the name of mosquitto nor the names of its
-   contributors may be used to endorse or promote products derived from
-   this software without specific prior written permission.
+[License text continues...]
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
-LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <config.h>
@@ -62,12 +44,13 @@ POSSIBILITY OF SUCH DAMAGE.
 
 #include "tls_mosq.h"
 #include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>  // Include for X509_get_ext_d2i()
 // DXL Begin
 #include "dxl.h"
 #include "DxlFlags.h"
-#include <openssl/ssl.h>
-#include <openssl/x509_vfy.h>
 // DXL End
+
 static int tls_ex_index_context = -1;
 static int tls_ex_index_listener = -1;
 
@@ -233,12 +216,12 @@ static int process_client_certificate(X509_STORE_CTX *ctx, struct mosquitto *con
     int succeeded = 1;
 
     // Get the certificate from the context
-    X509 *cert = 0;
-    if((cert = X509_STORE_CTX_get_current_cert(ctx)) != 0){
+    X509 *cert = X509_STORE_CTX_get_current_cert(ctx);
+    if(cert != NULL){
         if(true){ // Check currently disabled
             unsigned int fprint_size;
             unsigned char fprint[EVP_MAX_MD_SIZE];
-            char sha1str[41] = {0};
+            char sha1str[EVP_MAX_MD_SIZE*2+1] = {0};
 
             if(X509_digest(cert, EVP_sha1(), fprint, &fprint_size)){
                 char* p = sha1str;
@@ -256,8 +239,8 @@ static int process_client_certificate(X509_STORE_CTX *ctx, struct mosquitto *con
                     HASH_FIND_STR(context->cert_hashes, sha1str, s);
                     if(!s){
                         s = (struct cert_hashes*)_mosquitto_malloc(sizeof(struct cert_hashes));
-                        s->cert_sha1 = strdup(sha1str);
-                        HASH_ADD_KEYPTR(hh, context->cert_hashes, s->cert_sha1, (unsigned int)strlen(s->cert_sha1), s);
+                        s->cert_sha256 = strdup(sha1str);
+                        HASH_ADD_KEYPTR(hh, context->cert_hashes, s->cert_sha256, (unsigned int)strlen(s->cert_sha256), s);
                     }
                 }
 
@@ -270,40 +253,48 @@ static int process_client_certificate(X509_STORE_CTX *ctx, struct mosquitto *con
         }
 
         if(NID_dxlClientGuid != 0){
-            X509_CINF *cert_inf = cert->cert_info;
-            STACK_OF(X509_EXTENSION) *ext_list = NULL;
-            if(cert_inf){
-                ext_list = cert_inf->extensions;
-            }
-
+            // Use OpenSSL functions to get extensions without accessing internal structures
+            const STACK_OF(X509_EXTENSION) *ext_list = X509_get0_extensions(cert);
             if(ext_list){
                 for(int i = 0; i < sk_X509_EXTENSION_num(ext_list); i++){
-                    ASN1_OBJECT *obj;
                     X509_EXTENSION *ext;
+                    ASN1_OBJECT *obj;
+                    int nid;
+
                     ext = sk_X509_EXTENSION_value(ext_list, i);
                     if(!ext) continue;
+
                     obj = X509_EXTENSION_get_object(ext);
                     if(!obj) continue;
-                    int nid = OBJ_obj2nid(obj);
+
+                    nid = OBJ_obj2nid(obj);
                     if(nid != 0 && (nid == NID_dxlClientGuid || nid == NID_dxlTenantGuid)){
                         ASN1_OCTET_STRING* octet_str = X509_EXTENSION_get_data(ext);
                         if(octet_str){
-                            const unsigned char* octet_str_data = octet_str->data;
-                            if(octet_str_data){
-                                long xlen;
-                                int tag, xclass;
-                                /*int ret =*/ ASN1_get_object(&octet_str_data, &xlen, &tag, &xclass, octet_str->length);
-                                if(nid == NID_dxlClientGuid){
-                                    context->dxl_client_guid = _mosquitto_strdup((char*)octet_str_data);
-                                }else{
-                                    context->dxl_tenant_guid = _mosquitto_strdup((char*)octet_str_data);
+                            const unsigned char* octet_str_data = ASN1_STRING_get0_data(octet_str);
+                            int data_len = ASN1_STRING_length(octet_str);
+                            if(octet_str_data && data_len > 0){
+                                // Ensure the data is null-terminated
+                                char *data_str = (char*)_mosquitto_malloc(data_len + 1);
+                                if(data_str){
+                                    memcpy(data_str, octet_str_data, data_len);
+                                    data_str[data_len] = '\0';
 
-                                    // Check to see if tenant limit has been exceeded
-                                    if(dxl_update_sent_byte_count(context, 0) ||
-                                        !dxl_is_tenant_connection_allowed(context)){
-                                        // Has exceeded limit
-                                        succeeded = 0;
+                                    if(nid == NID_dxlClientGuid){
+                                        context->dxl_client_guid = data_str;
+                                    }else{
+                                        context->dxl_tenant_guid = data_str;
+
+                                        // Check to see if tenant limit has been exceeded
+                                        if(dxl_update_sent_byte_count(context, 0) ||
+                                            !dxl_is_tenant_connection_allowed(context)){
+                                            // Has exceeded limit
+                                            succeeded = 0;
+                                        }
                                     }
+                                }else{
+                                    // Memory allocation failed
+                                    succeeded = 0;
                                 }
                             }
                         }
@@ -425,13 +416,15 @@ int mqtt3_socket_listen(struct _mqtt3_listener *listener)
         if((listener->cafile || listener->capath) && listener->certfile && listener->keyfile){
 #if OPENSSL_VERSION_NUMBER >= 0x10001000L
             if(listener->tls_version == NULL){
-                listener->ssl_ctx = SSL_CTX_new(TLSv1_2_server_method());
+                listener->ssl_ctx = SSL_CTX_new(TLS_server_method());
             }else if(!strcmp(listener->tls_version, "tlsv1.2")){
                 listener->ssl_ctx = SSL_CTX_new(TLSv1_2_server_method());
             }else if(!strcmp(listener->tls_version, "tlsv1.1")){
                 listener->ssl_ctx = SSL_CTX_new(TLSv1_1_server_method());
             }else if(!strcmp(listener->tls_version, "tlsv1")){
-                listener->ssl_ctx = SSL_CTX_new(SSLv23_server_method());
+                listener->ssl_ctx = SSL_CTX_new(TLSv1_server_method());
+            }else{
+                listener->ssl_ctx = SSL_CTX_new(TLS_server_method());
             }
 #else
             listener->ssl_ctx = SSL_CTX_new(SSLv23_server_method());

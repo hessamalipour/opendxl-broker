@@ -258,7 +258,7 @@ fi
 
 # Run the broker console
 cd $DXLBROKER_CONSOLE_DIR || { fail 'Unable to change to broker console directory.'; }
-python2.7 -m dxlconsole $DVOL_CONSOLE_CONFIG_DIR $BROKER_ID &
+/opt/dxlconsole-env/bin/python -m dxlconsole $DVOL_CONSOLE_CONFIG_DIR $BROKER_ID &
 cd $DXLBROKER_DIR || { fail 'Unable to change to DXL broker directory.'; }
 
 # Run the DXL broker

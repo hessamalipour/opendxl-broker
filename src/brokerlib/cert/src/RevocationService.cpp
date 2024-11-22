@@ -44,10 +44,10 @@ void RevocationService::addCertificate( const char* cert )
         s = (struct cert_hashes*)malloc(sizeof(struct cert_hashes));
         if( s )
         {
-            s->cert_sha1 = strdup( cert );
-            if( s->cert_sha1 )
+            s->cert_sha256 = strdup( cert );
+            if( s->cert_sha256 )
             {
-                HASH_ADD_KEYPTR(hh, m_newCerts, s->cert_sha1, (unsigned int)strlen(s->cert_sha1), s);
+                HASH_ADD_KEYPTR(hh, m_newCerts, s->cert_sha256, (unsigned int)strlen(s->cert_sha256), s);
             }
         }
     }

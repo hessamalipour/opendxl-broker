@@ -138,7 +138,7 @@ bool TopicAuthorizationService::isAuthorizedToPublish( struct cert_hashes* certH
         struct cert_hashes *current, *tmp;
         HASH_ITER( hh, certHashes, current, tmp ) 
         {
-            if( _isAuthorizedToPublish( state, current->cert_sha1, topic ) )
+            if( _isAuthorizedToPublish( state, current->cert_sha256, topic ) )
             {
                 return true;
             }
@@ -160,7 +160,7 @@ bool TopicAuthorizationService::isAuthorizedToSubscribe( struct cert_hashes* cer
         struct cert_hashes *current, *tmp;
         HASH_ITER( hh, certHashes, current, tmp ) 
         {
-            if( _isAuthorizedToSubscribe( state, current->cert_sha1, topic ) )
+            if( _isAuthorizedToSubscribe( state, current->cert_sha256, topic ) )
             {
                 return true;
             }

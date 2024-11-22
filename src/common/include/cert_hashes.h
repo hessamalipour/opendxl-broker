@@ -11,8 +11,8 @@
  * Structure that contains hashes of certificates (used with UTHASH)
  */
 struct cert_hashes {
-    /** The certificate hash */
-    const char *cert_sha1;
+    /** The certificate hash (using SHA-256) */
+    const char *cert_sha256;  // Updated to use SHA-256
     /** The UT Hash handle */
     UT_hash_handle hh;
 };

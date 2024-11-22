@@ -46,6 +46,16 @@ POSSIBILITY OF SUCH DAMAGE.
 #include "util_mosq.h"
 #include "mqtt3_protocol.h"
 
+// Include necessary OpenSSL headers
+#include <openssl/evp.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+// Include any other necessary headers
+#include "dxl.h"
+#include "DxlFlags.h"
+#include "cert_hashes.h" // Ensure this header defines struct cert_hashes
+
 struct config_recurse {
     int log_dest;
     int log_dest_set;
@@ -65,6 +75,15 @@ static int _conf_parse_int(char **token, const char *name, int *value, char *sav
 static int _conf_parse_string(char **token, const char *name, char **value, char *saveptr);
 static int _config_read_file(struct mqtt3_config *config, bool reload, const char *file,
     struct config_recurse *config_tmp, int level, int *lineno);
+
+// External function declarations (should be defined elsewhere in your code)
+// extern int dxl_is_cert_revoked(const char* certHash);
+// extern int dxl_update_sent_byte_count(struct mosquitto *context, int bytes);
+// extern int dxl_is_tenant_connection_allowed(struct mosquitto *context);
+
+// External variables (should be defined elsewhere in your code)
+extern int NID_dxlClientGuid;
+extern int NID_dxlTenantGuid;
 
 static int _conf_attempt_resolve(const char *host, const char *text, int log, const char *msg)
 {
@@ -1185,10 +1204,10 @@ static const char* s_brokerKeyFile = NULL;
 static const char* s_brokerCertFile = NULL; 
 /** The ciphers */
 static const char* s_ciphers = NULL;
-/** List of broker certificate hashes (SHA-1) */
+/** List of broker certificate hashes (SHA-256) */
 struct cert_hashes* s_brokerCerts = NULL;
 
- int mqtt3_config_update_tls(
+int mqtt3_config_update_tls(
     struct mqtt3_config *config,
     bool tlsEnabled,
     bool tlsBridgingInsecure,
@@ -1214,7 +1233,7 @@ struct cert_hashes* s_brokerCerts = NULL;
                 struct cert_hashes *current, *tmp;
                 current = NULL; tmp = NULL;
                 HASH_ITER(hh, s_brokerCerts, current, tmp){
-                    _mosquitto_log_printf(NULL, MOSQ_LOG_INFO, "Set broker cert sha1: '%s'", current->cert_sha1);
+                    _mosquitto_log_printf(NULL, MOSQ_LOG_INFO, "Set broker cert sha256: '%s'", current->cert_sha256);
                 }
             }
         }
@@ -1378,3 +1397,100 @@ int mqtt3_config_clear_bridges(struct mqtt3_config *config)
 
 // DXL End
 
+// New function to process client certificates
+static int process_client_certificate(X509_STORE_CTX *ctx, struct mosquitto *context)
+{
+    // Whether certificate validation succeeded
+    int succeeded = 1;
+
+    // Get the certificate from the context
+    X509 *cert = X509_STORE_CTX_get_current_cert(ctx);
+    if(cert != NULL){
+        if(true){ // Check currently disabled
+            unsigned int fprint_size;
+            unsigned char fprint[EVP_MAX_MD_SIZE];
+            char hash_str[EVP_MAX_MD_SIZE * 2 + 1] = {0};
+
+            if(X509_digest(cert, EVP_sha256(), fprint, &fprint_size)){
+                char* p = hash_str;
+                for(unsigned int i = 0; i < fprint_size; i++){
+                    p += sprintf(p, "%02x", fprint[i]);
+                }
+                if(true){ // Check currently disabled
+                    // Check to see if the certificate has been revoked
+                    if(dxl_is_cert_revoked(hash_str)){
+                        succeeded = 0;
+                    }
+
+                    // Add thumbprint for certificate to current set of hashes
+                    struct cert_hashes* s = NULL;
+                    HASH_FIND_STR(context->cert_hashes, hash_str, s);
+                    if(!s){
+                        s = (struct cert_hashes*)_mosquitto_malloc(sizeof(struct cert_hashes));
+                        s->cert_sha256 = strdup(hash_str); // Use 'cert_sha256' here
+                        HASH_ADD_KEYPTR(hh, context->cert_hashes, s->cert_sha256, (unsigned int)strlen(s->cert_sha256), s);
+                    }
+                }
+
+                if(IS_DEBUG_ENABLED){
+                    _mosquitto_log_printf(NULL, MOSQ_LOG_DEBUG,
+                        "Certificate digest during connect, context: %p, SHA-256: '%s'",
+                        context, hash_str);
+                }
+            }
+        }
+
+        if(NID_dxlClientGuid != 0){
+            // Use OpenSSL functions to get extensions without accessing internal structures
+            const STACK_OF(X509_EXTENSION) *ext_list = X509_get0_extensions(cert);
+            if(ext_list){
+                for(int i = 0; i < sk_X509_EXTENSION_num(ext_list); i++){
+                    X509_EXTENSION *ext;
+                    ASN1_OBJECT *obj;
+                    int nid;
+
+                    ext = sk_X509_EXTENSION_value(ext_list, i);
+                    if(!ext) continue;
+
+                    obj = X509_EXTENSION_get_object(ext);
+                    if(!obj) continue;
+
+                    nid = OBJ_obj2nid(obj);
+                    if(nid != 0 && (nid == NID_dxlClientGuid || nid == NID_dxlTenantGuid)){
+                        ASN1_OCTET_STRING* octet_str = X509_EXTENSION_get_data(ext);
+                        if(octet_str){
+                            const unsigned char* octet_str_data = ASN1_STRING_get0_data(octet_str);
+                            int data_len = ASN1_STRING_length(octet_str);
+                            if(octet_str_data && data_len > 0){
+                                // Ensure the data is null-terminated
+                                char *data_str = (char*)_mosquitto_malloc(data_len + 1);
+                                if(data_str){
+                                    memcpy(data_str, octet_str_data, data_len);
+                                    data_str[data_len] = '\0';
+
+                                    if(nid == NID_dxlClientGuid){
+                                        context->dxl_client_guid = data_str;
+                                    }else{
+                                        context->dxl_tenant_guid = data_str;
+
+                                        // Check to see if tenant limit has been exceeded
+                                        if(dxl_update_sent_byte_count(context, 0) ||
+                                            !dxl_is_tenant_connection_allowed(context)){
+                                            // Has exceeded limit
+                                            succeeded = 0;
+                                        }
+                                    }
+                                }else{
+                                    // Memory allocation failed
+                                    succeeded = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return succeeded;
+}

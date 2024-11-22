@@ -103,7 +103,7 @@ void ServiceRegistration::freeCertificatesUtHash()
     struct cert_hashes *current, *tmp;
     HASH_ITER( hh, m_certsUthash, current, tmp ) {
         HASH_DEL( m_certsUthash, current );
-        free( (void*)current->cert_sha1 );
+        free( (void*)current->cert_sha256 );
         free( current );
     }
     m_certsUthash = NULL;

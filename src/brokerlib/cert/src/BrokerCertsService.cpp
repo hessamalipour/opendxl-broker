@@ -14,6 +14,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>  // Include for X509_get_ext_d2i()
 #include <openssl/x509_vfy.h>
 #include <openssl/objects.h>
 
@@ -23,7 +24,6 @@ using namespace std;
 using namespace dxl::broker;
 using namespace dxl::broker::cert;
 using namespace dxl::broker::util;
-
 
 /** {@inheritDoc} */
 BrokerCertsService& BrokerCertsService::getInstance()
@@ -41,78 +41,55 @@ BrokerCertsService::BrokerCertsService()
         "1.3.6.1.4.1.1230.540.2", "DxlTenantOID", "DXL Tenant GUID OID" );
 }
 
-
 /** {@inheritDoc} */
 bool BrokerCertsService::getFilesExist()
 {
     return checkFilesExist();
 }
 
-
 /**
- * Looks up and returns the specified asn1 nid certificate extension value
+ * Looks up and returns the specified ASN.1 NID certificate extension value
  *
- * @return    The specified asn1 nid certificate extension value 
+ * @return    The specified ASN.1 NID certificate extension value 
  *            (or empty string if it could not be determined)
  */
-static string lookupCertExtension( int asn1nid )
+static string lookupCertExtension(int asn1nid)
 {
     string retVal;
-    BIO *certbio = NULL;
-    X509 *cert = NULL;
-    int ret;
+    BIO* certbio = nullptr;
+    X509* cert = nullptr;
 
-    // Create the Input/Output BIO's.                             
-    certbio = BIO_new( BIO_s_file() );
+    // Create the Input/Output BIO
+    certbio = BIO_new(BIO_s_file());
 
     // Read the certificate
-    ret = BIO_read_filename( certbio, BrokerSettings::getBrokerCertFile().c_str() );
-    if ( ret != 1 || !( cert = PEM_read_bio_X509(certbio, NULL, 0, NULL ) ) ) 
+    if (BIO_read_filename(certbio, BrokerSettings::getBrokerCertFile().c_str()) != 1 ||
+        !(cert = PEM_read_bio_X509(certbio, nullptr, 0, nullptr)))
     {
         SL_START << "Error loading cert into memory" << SL_ERROR_END;
     }
     else
     {
-        // Find the Tenant GUID extension
-        X509_CINF *cert_inf = cert->cert_info;
-        STACK_OF(X509_EXTENSION) *ext_list = NULL;
-        if( cert_inf )
+        // Get the extension data
+        int crit = -1;  // Not used
+        int idx = -1;
+        ASN1_OCTET_STRING* ext_data = (ASN1_OCTET_STRING*)X509_get_ext_d2i(cert, asn1nid, &crit, &idx);
+        if (ext_data)
         {
-            ext_list = cert_inf->extensions;
-        }
+            const unsigned char* data = ASN1_STRING_get0_data(ext_data);
+            int length = ASN1_STRING_length(ext_data);
 
-        if( ext_list )
-        {
-            for( int i = 0; i < sk_X509_EXTENSION_num( ext_list ); i++ )
+            if (data && length > 0)
             {
-                ASN1_OBJECT *obj;
-                X509_EXTENSION *ext;
-                ext = sk_X509_EXTENSION_value( ext_list, i );
-                if( !ext ) continue;
-                obj = X509_EXTENSION_get_object( ext );
-                if( !obj ) continue;
-                int nid = OBJ_obj2nid( obj );
-                if( nid != 0 && nid == asn1nid )
-                {
-                    ASN1_OCTET_STRING* octet_str = X509_EXTENSION_get_data( ext );
-                    if( octet_str )
-                    {
-                        const unsigned char* octet_str_data = octet_str->data;
-                        if( octet_str_data )
-                        {
-                            long xlen;
-                            int tag, xclass;
-                            /*int ret =*/ ASN1_get_object( &octet_str_data, &xlen, &tag, &xclass, octet_str->length );
-                            retVal = (char*)octet_str_data;
-                        }
-                    }
-                }
+                retVal.assign((const char*)data, length);
             }
+
+            ASN1_OCTET_STRING_free(ext_data);
         }
     }
 
-    X509_free( cert );
-    BIO_free_all( certbio );
+    X509_free(cert);
+    BIO_free_all(certbio);
 
     return retVal;
 }
@@ -120,34 +97,34 @@ static string lookupCertExtension( int asn1nid )
 /** {@inheritDoc} */
 string BrokerCertsService::determineBrokerTenantGuid() const
 {
-    if( !checkFilesExist() )
+    if (!checkFilesExist())
     {
         SL_START << "Unable to determine broker Tenant GUID, cert files don't exist" << SL_ERROR_END;
         return "";
     }
 
-    return lookupCertExtension( m_tenantGuidNid );
+    return lookupCertExtension(m_tenantGuidNid);
 }
 
 /** {@inheritDoc} */
 string BrokerCertsService::determineBrokerGuid() const
 {
-    if( !checkFilesExist() )
+    if (!checkFilesExist())
     {
         SL_START << "Unable to determine broker GUID, cert files don't exist" << SL_ERROR_END;
         return "";
     }
 
-    return lookupCertExtension( m_clientGuidNid );
+    return lookupCertExtension(m_clientGuidNid);
 }
 
 /** {@inheritDoc} */
 bool BrokerCertsService::checkFilesExist() const
 {
     return (
-        FileUtil::fileExists( BrokerSettings::getBrokerPrivateKeyFile() ) && 
-        FileUtil::fileExists( BrokerSettings::getBrokerCertFile() ) && 
-        FileUtil::fileExists( BrokerSettings::getBrokerCertChainFile() ) && 
-        FileUtil::fileExists( BrokerSettings::getClientCertChainFile() )
+        FileUtil::fileExists(BrokerSettings::getBrokerPrivateKeyFile()) &&
+        FileUtil::fileExists(BrokerSettings::getBrokerCertFile()) &&
+        FileUtil::fileExists(BrokerSettings::getBrokerCertChainFile()) &&
+        FileUtil::fileExists(BrokerSettings::getClientCertChainFile())
     );
 }

@@ -91,12 +91,12 @@ bool ManagedCerts::writeToUthash(
         {
             return false;
         }
-        s->cert_sha1 = strdup( it->c_str() );
-        if( !s->cert_sha1 )
+        s->cert_sha256 = strdup( it->c_str() );
+        if( !s->cert_sha256 )
         {
             return false;
         }
-        HASH_ADD_KEYPTR( hh, *uthashptr, s->cert_sha1, (unsigned int)strlen(s->cert_sha1), s );
+        HASH_ADD_KEYPTR( hh, *uthashptr, s->cert_sha256, (unsigned int)strlen(s->cert_sha256), s );
     }
 
     return true;

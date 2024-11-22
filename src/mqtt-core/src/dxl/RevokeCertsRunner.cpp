@@ -31,12 +31,12 @@ void RevokeCertsRunner::run()
                 struct cert_hashes* s = NULL;                
                 HASH_ITER( hh, context->cert_hashes, current, tmp )
                 {
-                    HASH_FIND_STR( m_revokedCerts, current->cert_sha1, s );
+                    HASH_FIND_STR( m_revokedCerts, current->cert_sha256, s );
                     if( s )
                     {
                         // Force disconnect
                         if( IS_DEBUG_ENABLED )
-                            _mosquitto_log_printf( NULL, MOSQ_LOG_DEBUG, "Force disconnect: %s", current->cert_sha1 );                                    
+                            _mosquitto_log_printf( NULL, MOSQ_LOG_DEBUG, "Force disconnect: %s", current->cert_sha256 );                                    
                         mqtt3_context_disconnect( db, db->contexts[i] );                        
                     }
                 }                
@@ -46,7 +46,7 @@ void RevokeCertsRunner::run()
         // Free revoked certs
         HASH_ITER( hh, m_revokedCerts, current, tmp ) {
             HASH_DEL( m_revokedCerts, current );
-            free( (void*)current->cert_sha1 );
+            free( (void*)current->cert_sha256 );
             free( current );
         }
     }

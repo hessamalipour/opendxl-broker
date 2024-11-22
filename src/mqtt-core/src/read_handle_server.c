@@ -160,7 +160,7 @@ int mqtt3_handle_connect(struct mosquitto_db *db, struct mosquitto *context)
         // broker certificate
         struct cert_hashes *current, *tmp;
         HASH_ITER(hh, context->cert_hashes, current, tmp){
-            if(mqtt3_config_is_broker_cert(current->cert_sha1)){
+            if(mqtt3_config_is_broker_cert(current->cert_sha256)){
                 context->tls_certtype = broker;
                 break;
             }
@@ -288,7 +288,7 @@ int mqtt3_handle_connect(struct mosquitto_db *db, struct mosquitto *context)
             cert_chain[0] = '\0';
             int cert_index = 0;
             HASH_ITER(hh, context->cert_hashes, current, tmp){
-                cert = current->cert_sha1;
+                cert = current->cert_sha256;
                 if(cert_index > 0){
                     strncat(cert_chain, ";", (cert_chain_len - strlen(cert_chain) - 1));
                 }
@@ -416,8 +416,8 @@ int mqtt3_handle_connect(struct mosquitto_db *db, struct mosquitto *context)
         struct cert_hashes *current, *tmp;
         HASH_ITER(hh, context->cert_hashes, current, tmp){
             struct cert_hashes* s = (struct cert_hashes*)_mosquitto_malloc(sizeof(struct cert_hashes));
-            s->cert_sha1 = strdup(current->cert_sha1);
-            HASH_ADD_KEYPTR(hh, db->contexts[i]->cert_hashes, s->cert_sha1, (unsigned int)strlen(s->cert_sha1), s);
+            s->cert_sha256 = strdup(current->cert_sha256);
+            HASH_ADD_KEYPTR(hh, db->contexts[i]->cert_hashes, s->cert_sha256, (unsigned int)strlen(s->cert_sha256), s);
         }
         // DXL end
         context->listener = NULL; // DXL
